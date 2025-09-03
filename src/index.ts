@@ -10,7 +10,7 @@ import {
   RelayParams,
 } from './types/common';
 import { domain, generateNonce, relayTypes } from './utils/tx';
-
+import { EventSource } from 'eventsource';
 export class AbstractPay {
   private owners: any;
   public walletAddress: any;
@@ -40,9 +40,9 @@ export class AbstractPay {
   }
 
   // Create a new payment order
-  public async initialisePayment(params: IOrderParams) {
+  public async initialisePayment(data: IOrderParams) {
     try {
-      return apiCall('/create-order', 'POST', { params });
+      return apiCall(`/orders/`, 'POST', data);
     } catch (error) {
       console.error('Error creating payment order:', error);
       throw error;
@@ -100,9 +100,9 @@ export class AbstractPay {
   }
 
   // Submit a signed payment Order
-  public async submitOrder(orderId: string, params: any) {
+  public async submitOrder(orderId: string, data: any) {
     try {
-      return apiCall(`/submit-order/${orderId}`, 'POST', { params });
+      return apiCall(`/orders/${orderId}`, 'POST', data);
     } catch (error) {
       console.error('Error submitting payment order:', error);
       throw error;
@@ -112,7 +112,7 @@ export class AbstractPay {
   // Associates the sender's address with an existing order in a scan-and-pay workflow
   public async setPayerForOrder(orderId: string, payerAddress: string) {
     try {
-      return apiCall(`/set-payee/${orderId}`, 'PUT', {
+      return apiCall(`/${orderId}/set-payee`, 'PUT', {
         spenderAddress: payerAddress,
       });
     } catch (error) {
@@ -122,15 +122,44 @@ export class AbstractPay {
   }
 
   // Perform payment in one method (frontend integration convenience)
+  status = (orderId: string) =>
+    new EventSource(sdkConfig.getBaseUrl() + `/orders/${orderId}?sse=true`);
+  private waitForConfirmation = async (orderId: string) =>
+    new Promise((resolve, reject) => {
+      this.status(orderId).onmessage = function (event) {
+        try {
+          const data = JSON.parse(event.data);
+          switch (data.status) {
+            case 'Completed':
+              return resolve(data);
+            case 'Failed':
+              return reject(data);
+          }
+          if (data.status === 'Completed') {
+            resolve(data);
+          }
+        } catch (error) {
+          console.log(error);
+        }
+      };
+    });
   public async pay(param: IOrderParams) {
     try {
       const result = await this.initialisePayment(param);
-      const { typedOrder, orderHash, allowance } = result;
+      const { typedOrder, orderId, allowance } = result;
       const { signedOrder, signedApprovalData } = await this.signPaymentData(
         typedOrder,
         allowance
       );
-      return this.submitOrder(orderHash, { signedOrder, signedApprovalData });
+      let res = await this.submitOrder(orderId, {
+        signedOrder,
+        signedApprovalData,
+      });
+      return {
+        ...result,
+        ...res,
+        waitForConfirmation: () => this.waitForConfirmation(orderId),
+      };
     } catch (error) {
       console.error('Error processing payment:', error);
       throw error;
