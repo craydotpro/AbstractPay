@@ -52,8 +52,12 @@ const payParams = {
   }
 }
 
-sdk.pay(payParams).then((res: any) => { console.log(res) }).catch((err: any) => { console.error(err) })
-
+;(async () => {
+  let order = await sdk.pay(payParams);
+  console.log(order);
+  let res = await order.waitForConfirmation();
+  console.log(res);
+})();
 // ------------------ Sign OrderHash ------------------
 // const orderHash = ['0x4062fe1da0763030c0c34fb41c848502e7adecaec8540657be57721bcfa761b5']
 
